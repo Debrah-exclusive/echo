@@ -46,7 +46,22 @@
   #overlay.over h1 { font-size: clamp(34px, 9vw, 60px); }
   #board { width: min(330px, 86vw); display: flex; flex-direction: column; gap: 7px; }
   #board[hidden], #tagline[hidden], #rows[hidden], #note[hidden] { display: none; }
-  #note { margin: 0; font-size: 12px; color: var(--gold); }
+  #note, #news { margin: 0; font-size: 12px; color: var(--gold); }
+  #news { font-size: 14px; max-width: 34ch; }
+  #news[hidden], #challengeBtn[hidden] { display: none; }
+  #challengeBtn {
+    pointer-events: auto; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; color: #1a1405;
+    background: var(--gold); border: 0; border-radius: 999px; padding: 8px 18px;
+  }
+  #looks { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+  #swatches { display: flex; gap: 9px; }
+  #swatches button {
+    pointer-events: auto; cursor: pointer; width: 26px; height: 26px; padding: 0; border-radius: 50%;
+    background: #fff; border: 4px solid var(--c); box-shadow: 0 0 0 2px transparent;
+  }
+  #swatches button.sel { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--gold); }
+  #swatches button.locked { background: none; border: 2px dashed rgba(255,255,255,.3); }
+  #lookNote { margin: 0; font-size: 12px; color: var(--dim); min-height: 1.3em; }
   #boardTitle { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
   #rows {
     list-style: none; margin: 0; padding: 0; overflow: hidden; font-variant-numeric: tabular-nums;
@@ -69,8 +84,12 @@
   #overlay.hidden button, #overlay.hidden input { pointer-events: none; }
   @media (max-width: 580px) {
     h1 { font-size: clamp(48px, 15vw, 88px); }
-    #modes { flex-direction: column; align-items: center; gap: 8px; }
-    #modes button { width: min(270px, 82vw); padding: 8px 12px; }
+    #modes { flex-wrap: nowrap; gap: 6px; width: 100%; }
+    #modes button { flex: 1 1 0; width: auto; min-width: 0; padding: 8px 4px; }
+    #modes button b { font-size: 14px; }
+    #modes button span { font-size: 11px; }
+    #overlay.over #modes button span { display: none; }
+    #overlay.over #help { display: none; }
   }
   @media (max-height: 520px) {
     h1 { font-size: 46px; }
@@ -90,6 +109,7 @@
 <div id="overlay">
   <h1>ECHO</h1>
   <p id="result"></p>
+  <p id="news" hidden></p>
   <p id="tagline"></p>
   <div id="modes">
     <button data-mode="levels"><b></b><span></span></button>
@@ -101,6 +121,11 @@
     <ol id="rows"></ol>
     <p id="note" hidden></p>
     <label id="nameRow">Your name <input id="name" maxlength="10" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="YOU"></label>
+  </div>
+  <button id="challengeBtn" hidden>Challenge a friend</button>
+  <div id="looks">
+    <div id="swatches"></div>
+    <p id="lookNote"></p>
   </div>
   <p id="cta"></p>
   <p id="help"></p>
@@ -126,7 +151,7 @@
   const NEAR_COOLDOWN = 1.5;    // seconds before the same ghost can pay out again
   const DASH_TIME = 0.16;
   const DASH_SPEED = SPEED * 3.4;
-  const DASH_CD = 2.5;
+  const DASH_CD = 2;
   const DASH_GRACE = 0.06;      // extra invulnerability after a dash ends
   const CYAN = '#7fe7ff';
   const HISTORY = 48;           // steps of play kept for the death replay (0.8 s)
@@ -146,6 +171,10 @@
   const elRows = document.getElementById('rows');
   const elName = document.getElementById('name');
   const elNote = document.getElementById('note');
+  const elNews = document.getElementById('news');
+  const elChallenge = document.getElementById('challengeBtn');
+  const elSwatches = document.getElementById('swatches');
+  const elLookNote = document.getElementById('lookNote');
   const modeButtons = [...document.querySelectorAll('#modes button')];
 
   const isTouch = matchMedia('(pointer: coarse)').matches;
@@ -247,6 +276,45 @@
   const bestKey = (m, date) => m === 'levels' ? 'echo.best.levels' : m === 'endless' ? 'echo.best' : 'echo.daily.' + date;
   const getBest = m => +load(bestKey(m, today()), 0) || 0;
 
+  const yesterday = () => new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+
+  // Daily streak: consecutive days with a scoring Daily run. The best streak ever unlocks looks.
+  let streak = { last: '', count: 0, best: 0 };
+  try { streak = Object.assign(streak, JSON.parse(load('echo.streak', '{}'))); } catch (e) { /* keep defaults */ }
+  const streakNow = () => streak.last === today() || streak.last === yesterday() ? streak.count : 0;
+  function bumpStreak(date) {
+    if (streak.last === date) return;
+    streak.count = streak.last === yesterday() ? streak.count + 1 : 1;
+    streak.last = date;
+    streak.best = Math.max(streak.best, streak.count);
+    save('echo.streak', JSON.stringify(streak));
+  }
+
+  // Looks tint the player's rim, glow and trail. The centre stays white so you never pass for a ghost.
+  const LOOKS = [
+    { id: 'classic', name: 'Classic', color: '#ffffff', need: '', ok: () => true },
+    { id: 'comet', name: 'Comet', color: '#9db4ff', need: 'reach level 3 in Levels', ok: () => bestLevel >= 3, long: true },
+    { id: 'rose', name: 'Rose', color: '#ff7eb6', need: 'score 40 in Endless', ok: () => getBest('endless') >= 40 },
+    { id: 'ember', name: 'Ember', color: '#ff9f43', need: 'play the Daily 2 days in a row', ok: () => streak.best >= 2 },
+    { id: 'mint', name: 'Mint', color: '#6ee7a8', need: 'play the Daily 3 days in a row', ok: () => streak.best >= 3 },
+    { id: 'violet', name: 'Violet', color: '#b18cff', need: 'play the Daily 5 days in a row', ok: () => streak.best >= 5 },
+    { id: 'gold', name: 'Gold', color: '#ffd166', need: 'play the Daily 7 days in a row', ok: () => streak.best >= 7, sparkle: true },
+  ];
+  let look = LOOKS.find(l => l.id === load('echo.look', 'classic') && l.ok()) || LOOKS[0];
+  const unlockedIds = () => LOOKS.filter(l => l.ok()).map(l => l.id);
+
+  // A challenge link looks like  …/#beat=endless.42.DEBRAH  (daily ones also carry their date).
+  let challenge = null, challengeExpired = false;
+  try {
+    const m = /^#beat=(levels|endless|daily)\.(?:(\d{4}-\d\d-\d\d)\.)?(\d{1,6})\.(.*)$/.exec(decodeURIComponent(location.hash));
+    if (m && +m[3] > 0) {
+      const name = m[4].replace(/[^\w \-]/g, '').trim().slice(0, 10) || 'A friend';
+      if (m[1] === 'daily' && m[2] !== today()) challengeExpired = true;
+      else { challenge = { mode: m[1], score: +m[3], name }; mode = m[1]; }
+    }
+  } catch (e) { /* malformed link: ignore */ }
+  const activeChallenge = () => challenge && challenge.mode === mode ? challenge : null;
+
   function seeded(str) {
     let h = 1779033703 ^ str.length;
     for (let i = 0; i < str.length; i++) { h = Math.imul(h ^ str.charCodeAt(i), 3432918353); h = h << 13 | h >>> 19; }
@@ -259,13 +327,14 @@
     };
   }
 
-  // Levels mode: each level needs more gems, and its ghosts replay faster with less warning.
+  // Levels mode: each level needs more gems; later levels also speed the ghosts up.
   const gemsNeeded = () => Math.min(10, 4 + level);
   function setLevel(n) {
     level = n; levelGems = 0;
-    const k = mode === 'levels' ? n - 1 : 0;
-    rate = Math.min(1.6, 1 + 0.08 * k);
-    spawnTime = Math.max(0.45, SPAWN_TIME - 0.04 * k);
+    // Levels 1-3 run at normal speed; from level 4 ghosts gain 5% a level, up to 35% faster.
+    const k = mode === 'levels' ? Math.max(0, n - 3) : 0;
+    rate = Math.min(1.35, 1 + 0.05 * k);
+    spawnTime = Math.max(0.5, SPAWN_TIME - 0.03 * k);
   }
   let shake = 0, deadFor = 0, killer = -1, time = 0, scorePop = 0, newBest = false;
   let history = [], replay = null, overShown = false, overAt = 0;
@@ -596,7 +665,10 @@
     player.y = Math.max(R, Math.min(H - R, player.y + player.vy * STEP));
     path.push(player.x, player.y);
     trail.push(player.x, player.y);
-    if (trail.length > 28) trail.splice(0, 2);
+    if (trail.length > (look.long ? 64 : 28)) trail.splice(0, 2);
+    if (look.sparkle && Math.random() < 0.3) {
+      particles.push({ x: player.x, y: player.y, vx: (Math.random() - 0.5) * 60, vy: (Math.random() - 0.5) * 60, life: 0.5, age: 0, color: look.color });
+    }
 
     // Ghosts replay their recorded segment on a loop
     for (let i = 0; i < ghosts.length; i++) {
@@ -700,8 +772,9 @@
     ghosts.forEach((g, i) => burst(g.x, g.y, `hsl(${ghostHue(i)},90%,65%)`, 14, 240));
     ghosts = []; path = []; shake = 7;
     history = [];   // old snapshots refer to ghosts that no longer exist
+    const oldRate = rate;
     setLevel(level + 1);
-    banner = { text: `LEVEL ${level}`, sub: `Board cleared +${bonus} · ghosts get faster`, age: 0 };
+    banner = { text: `LEVEL ${level}`, sub: `Board cleared +${bonus}` + (rate > oldRate ? ' · ghosts speed up' : ''), age: 0 };
     [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => blip(f, 0.18, 'triangle', 0.13), 60 + i * 70));
   }
 
@@ -714,10 +787,13 @@
     burst(player.x, player.y, `hsl(${ghostHue(i)},90%,65%)`, 24, 300);
     deathSound();
     if (navigator.vibrate) { try { navigator.vibrate(120); } catch (e) { /* unsupported */ } }
+    const hadLooks = unlockedIds();
     newBest = score > best;
     if (newBest) { best = score; save(bestKey(mode, runDate), String(best)); }
     if (mode === 'levels' && level > bestLevel) { bestLevel = level; save('echo.level', String(level)); }
+    if (mode === 'daily' && score > 0) bumpStreak(runDate);
     lastRun = { mode, score, level, echoes: ghosts.length, date: runDate };
+    lastRun.newLooks = LOOKS.filter(l => l.ok() && !hadLooks.includes(l.id)).map(l => l.name);
     lastEntry = null;
     if (score > 0) {
       const entry = { id: Date.now(), name: playerName || 'YOU', score, level, echoes: ghosts.length };
@@ -739,10 +815,11 @@
       b.classList.toggle('sel', m === mode);
       b.querySelector('b').textContent = (isTouch ? '' : `${i + 1} · `) + MODE_NAMES[m];
       b.querySelector('span').textContent =
-        m === 'levels' ? (bestLevel ? `Best: level ${bestLevel} · ${top} pts` : 'Clear the board, then face faster ghosts')
+        m === 'levels' ? (bestLevel ? `Best: level ${bestLevel} · ${top} pts` : 'Clear the board to reach the next level')
         : m === 'endless' ? (top ? `Best: ${top} pts` : 'One board, no breaks')
-        : (top ? `Today's best: ${top} pts` : 'Same gems for everyone today');
+        : (top ? `Today: ${top} pts` : 'Same gems for everyone today') + (streakNow() ? ` · ${streakNow()}-day streak` : '');
     });
+    renderLooks();
     elCta.textContent = isTouch ? `Tap to play ${MODE_NAMES[mode]}` : `Space to play ${MODE_NAMES[mode]}`;
     elHelp.textContent = isTouch
       ? 'Drag to move · double-tap to dash through ghosts'
@@ -811,8 +888,54 @@
   }
   modeButtons.forEach(b => b.addEventListener('click', () => { b.blur(); selectMode(b.dataset.mode); tryStart(); }));
 
+  function renderLooks(noteFor) {
+    elSwatches.textContent = '';
+    for (const l of LOOKS) {
+      const b = document.createElement('button'), open = l.ok();
+      b.style.setProperty('--c', l.color);
+      b.className = (l === look ? 'sel ' : '') + (open ? '' : 'locked');
+      b.setAttribute('aria-label', open ? `${l.name} look` : `${l.name} look, locked`);
+      b.addEventListener('click', () => {
+        if (open) { look = l; save('echo.look', l.id); renderLooks(); }
+        else renderLooks(l);
+      });
+      elSwatches.appendChild(b);
+    }
+    elLookNote.textContent = noteFor ? `${noteFor.name} is locked: ${noteFor.need}.` : `Look: ${look.name}`;
+  }
+
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* fall through */ }
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    ta.remove();
+    return ok;
+  }
+  // Hands a friend a link that opens the game with this run's score as the target to beat.
+  elChallenge.addEventListener('click', async () => {
+    elChallenge.blur();
+    const r = lastRun;
+    if (!r) return;
+    const who = encodeURIComponent((playerName || 'A friend').replace(/[^\w \-]/g, ''));
+    const url = location.origin + location.pathname + `#beat=${r.mode}.${r.mode === 'daily' ? r.date + '.' : ''}${r.score}.${who}`;
+    const text = `Can you beat my ${r.score} in ECHO ${MODE_NAMES[r.mode]}?`;
+    if (navigator.share) {
+      try { await navigator.share({ text, url }); return; }
+      catch (e) { if (e && e.name === 'AbortError') return; }   // closed the share sheet; anything else falls back to copying
+    }
+    elChallenge.textContent = await copyText(`${text} ${url}`) ? 'Link copied. Paste it to a friend' : 'Could not copy the link';
+  });
+
   function showTitle() {
+    const c = activeChallenge();
     elResult.textContent = '';
+    elNews.hidden = !c && !challengeExpired;
+    elNews.textContent = c ? `${c.name} challenges you: beat ${c.score} in ${MODE_NAMES[c.mode]}.`
+      : challengeExpired ? "That daily challenge was for an earlier day. Today's daily is ready." : '';
+    elChallenge.hidden = true;
     elTagline.textContent = TAGLINE;
     overlay.classList.remove('over');
     refreshMenu();
@@ -827,6 +950,20 @@
     elTagline.textContent = r.score === 0
       ? 'Grab the gem to begin. Each one leaves a ghost of the path you took.'
       : `You were caught by your own past, with ${r.echoes} ${echoWord} on the board.`;
+    const news = [];
+    const c = challenge && challenge.mode === r.mode ? challenge : null;
+    if (c && r.score > c.score) {
+      news.push(`You beat ${c.name}'s ${c.score}. Send one back.`);
+      challenge = null;
+      try { history.replaceState(null, '', location.pathname); } catch (e) { /* not allowed here */ }
+    } else if (c) {
+      news.push(`${c.name}'s ${c.score} still stands. You were ${c.score - r.score + 1} short.`);
+    }
+    if (r.newLooks.length) news.push(`New look unlocked: ${r.newLooks.join(', ')}.`);
+    elNews.hidden = news.length === 0;
+    elNews.textContent = news.join(' ');
+    elChallenge.textContent = 'Challenge a friend';
+    elChallenge.hidden = r.score === 0;
     overlay.classList.add('over');
     refreshMenu();
     overlay.classList.remove('hidden');
@@ -879,7 +1016,11 @@
       ctx.fillText(mode === 'levels' ? `LEVEL ${level} · ${levelGems}/${gemsNeeded()}`
         : mode === 'daily' ? `DAILY ${runDate}` : 'ENDLESS', 14, 12);
       ctx.textBaseline = 'bottom';
-      ctx.fillText(`BEST ${Math.max(best, score)}`, 14, H - 10);
+      const target = activeChallenge();
+      if (target) ctx.fillStyle = '#ffd166';
+      ctx.fillText(!target ? `BEST ${Math.max(best, score)}`
+        : score > target.score ? `AHEAD OF ${target.name.toUpperCase()}` : `BEAT ${target.score} · ${target.name.toUpperCase()}`, 14, H - 10);
+      ctx.fillStyle = 'rgba(255,255,255,.35)';
       ctx.textBaseline = 'top';
       if (mult > 1) {
         ctx.textAlign = 'center';
@@ -951,9 +1092,11 @@
     if (state === 'play') {
       for (let j = 0; j < trail.length; j += 2) {
         const k = j / trail.length;
-        ctx.fillStyle = `rgba(255,255,255,${k * 0.16})`;
+        ctx.globalAlpha = k * (look.id === 'classic' ? 0.16 : 0.34);
+        ctx.fillStyle = look.color;
         circle(trail[j], trail[j + 1], R * (0.35 + k * 0.6)); ctx.fill();
       }
+      ctx.globalAlpha = 1;
     }
     if (rv) {
       const idx = Math.floor(replay.pos);
@@ -968,10 +1111,16 @@
       const dashing = rv ? rv.a.dash : safeT > 0;
       const px = rv ? rv.a.px + (rv.b.px - rv.a.px) * rv.f : player.x;
       const py = rv ? rv.a.py + (rv.b.py - rv.a.py) * rv.f : player.y;
-      ctx.fillStyle = dashing ? 'rgba(127,231,255,.3)' : 'rgba(255,255,255,.16)';
+      ctx.globalAlpha = dashing ? 0.3 : look.id === 'classic' ? 0.16 : 0.3;
+      ctx.fillStyle = dashing ? CYAN : look.color;
       circle(px, py, R * (dashing ? 2.8 : 2)); ctx.fill();
+      ctx.globalAlpha = 1;
       ctx.fillStyle = '#fff';
       circle(px, py, R); ctx.fill();
+      if (look.id !== 'classic') {
+        ctx.strokeStyle = look.color; ctx.lineWidth = 3.5;
+        circle(px, py, R - 1.75); ctx.stroke();
+      }
       if (state === 'play') {
         // Dash cooldown ring: faint and full when ready, refilling otherwise
         const ready = dashCd <= 0;
