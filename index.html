@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>ECHO</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#07080d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ECHO">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
 <style>
   :root { --bg: #07080d; --ink: #eef1ff; --dim: #8a90ad; --gold: #ffd166; }
   * { box-sizing: border-box; }
@@ -53,6 +61,11 @@
     pointer-events: auto; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; color: #1a1405;
     background: var(--gold); border: 0; border-radius: 999px; padding: 8px 18px;
   }
+  #install {
+    pointer-events: auto; font: inherit; font-size: 13px; cursor: pointer; color: var(--ink);
+    background: none; border: 1px solid rgba(255,255,255,.25); border-radius: 999px; padding: 6px 14px;
+  }
+  #install[hidden], #overlay.over #install { display: none; }
   #looks { display: flex; flex-direction: column; align-items: center; gap: 5px; }
   #swatches { display: flex; gap: 9px; }
   #swatches button {
@@ -128,6 +141,7 @@
     <p id="lookNote"></p>
   </div>
   <p id="cta"></p>
+  <button id="install" hidden>Add to home screen</button>
   <p id="help"></p>
 </div>
 <button id="mute" aria-label="Toggle sound">♪</button>
@@ -172,6 +186,7 @@
   const elName = document.getElementById('name');
   const elNote = document.getElementById('note');
   const elNews = document.getElementById('news');
+  const elInstall = document.getElementById('install');
   const elChallenge = document.getElementById('challengeBtn');
   const elSwatches = document.getElementById('swatches');
   const elLookNote = document.getElementById('lookNote');
@@ -315,6 +330,17 @@
   } catch (e) { /* malformed link: ignore */ }
   const activeChallenge = () => challenge && challenge.mode === mode ? challenge : null;
 
+  // First-run guide: four short prompts pinned to the thing they describe. Shown once per device.
+  const TUT_LINES = {
+    1: [isTouch ? 'Drag anywhere to move' : 'Arrow keys to move', 'Grab the gem'],
+    2: ['This ghost replays your path', "Don't touch it"],
+    3: ['Grab gems before the ring empties', 'to build a combo'],
+    4: [isTouch ? 'Double-tap to dash' : 'Space to dash', 'straight through a ghost'],
+  };
+  const TUT_SECONDS = 4;        // how long each prompt after the first stays up
+  let tut = load('echo.tut', '') ? null : { step: 1, t: 0 };
+  function endTutorial() { tut = null; save('echo.tut', '1'); }
+
   function seeded(str) {
     let h = 1779033703 ^ str.length;
     for (let i = 0; i < str.length; i++) { h = Math.imul(h ^ str.charCodeAt(i), 3432918353); h = h << 13 | h >>> 19; }
@@ -361,6 +387,7 @@
     setLevel(1);
     banner = mode === 'levels' ? { text: 'LEVEL 1', sub: `Collect ${gemsNeeded()} gems to clear the board`, age: 0 }
            : mode === 'daily' ? { text: 'DAILY', sub: runDate, age: 0 } : null;
+    if (tut) { tut.step = 1; tut.t = 0; banner = null; }   // the guide does the talking on a first run
     score = 0; shake = 0; deadFor = 0; killer = -1; scorePop = 0; newBest = false;
     history = []; replay = null; overShown = false;
     placeGem();
@@ -700,6 +727,12 @@
       }
     }
 
+    // First-run guide: after the first gem, each prompt gets a few seconds
+    if (tut && tut.step > 1 && (tut.t += STEP) > TUT_SECONDS) {
+      tut.t = 0;
+      if (++tut.step > 4) endTutorial();
+    }
+
     // Combo window
     gem.left -= STEP;
     if (gem.left <= 0 && !gem.expired) {
@@ -714,6 +747,7 @@
     // Gem
     if (Math.hypot(gem.x - player.x, gem.y - player.y) < PICKUP) {
       score += mult; scorePop = 1; runGems++;
+      if (tut && tut.step === 1) { tut.step = 2; tut.t = 0; }
       float(gem.x, gem.y - 26, `+${mult}`, '#ffd166');
       if (!gem.expired) mult = Math.min(MAX_MULT, mult + 1);
       burst(gem.x, gem.y, '#ffd166', 18, 260);
@@ -787,6 +821,7 @@
     burst(player.x, player.y, `hsl(${ghostHue(i)},90%,65%)`, 24, 300);
     deathSound();
     if (navigator.vibrate) { try { navigator.vibrate(120); } catch (e) { /* unsupported */ } }
+    if (tut && tut.step > 1) endTutorial();   // they have met a ghost; no need to repeat the guide
     const hadLooks = unlockedIds();
     newBest = score > best;
     if (newBest) { best = score; save(bestKey(mode, runDate), String(best)); }
@@ -1172,6 +1207,27 @@
       ctx.fillText(isTouch ? 'Tap to skip' : 'Space to skip', vw / 2, Math.min(vh - 26, oy + H * scale - 26));
     }
 
+    if (tut && state === 'play' && !paused) {
+      const g0 = ghosts[0];
+      const at = tut.step === 2 && g0 ? g0 : tut.step === 4 ? player : gem;
+      const tx = ox + at.x * scale, ty = oy + at.y * scale, lines = TUT_LINES[tut.step];
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.strokeStyle = `rgba(255,255,255,${0.55 + 0.35 * Math.sin(time * 7)})`; ctx.lineWidth = 2;
+      circle(tx, ty, 24 + 3 * Math.sin(time * 7)); ctx.stroke();
+      ctx.font = '700 15px ui-rounded, "SF Pro Rounded", "Segoe UI", system-ui, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const w = Math.max(ctx.measureText(lines[0]).width, ctx.measureText(lines[1]).width) + 24, h = 50;
+      const bx = Math.max(8, Math.min(vw - w - 8, tx - w / 2));
+      const by = ty - 38 - h > 8 ? ty - 38 - h : ty + 38;   // above the target, or below when there is no room
+      ctx.fillStyle = 'rgba(7,8,13,.88)';
+      ctx.beginPath(); ctx.rect(bx, by, w, h); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(lines[0], bx + w / 2, by + 16);
+      ctx.fillStyle = '#ffd166';
+      ctx.fillText(lines[1], bx + w / 2, by + 35);
+    }
+
     if (paused) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = 'rgba(7,8,13,.66)';
@@ -1195,6 +1251,28 @@
     musicTick();
     draw();
     requestAnimationFrame(frame);
+  }
+
+  // ---------- add to home screen ----------
+  // Android and desktop Chrome offer a real install prompt; iPhones only allow it from the Share menu.
+  let installEvent = null;
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (isIOS && !standalone) elInstall.hidden = false;
+  addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvent = e; elInstall.hidden = false; });
+  addEventListener('appinstalled', () => { installEvent = null; elInstall.hidden = true; });
+  elInstall.addEventListener('click', async () => {
+    elInstall.blur();
+    if (installEvent) {
+      installEvent.prompt();
+      try { await installEvent.userChoice; } catch (e) { /* dismissed */ }
+      installEvent = null; elInstall.hidden = true;
+    } else {
+      elInstall.textContent = 'In Safari: tap Share, then "Add to Home Screen"';
+    }
+  });
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    navigator.serviceWorker.register('sw.js').catch(() => { /* offline play is a bonus */ });
   }
 
   addEventListener('resize', layout);
