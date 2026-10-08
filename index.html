@@ -45,7 +45,8 @@
   #modes button.sel { border-color: var(--gold); background: rgba(255,209,102,.1); }
   #overlay.over h1 { font-size: clamp(34px, 9vw, 60px); }
   #board { width: min(330px, 86vw); display: flex; flex-direction: column; gap: 7px; }
-  #board[hidden], #tagline[hidden] { display: none; }
+  #board[hidden], #tagline[hidden], #rows[hidden], #note[hidden] { display: none; }
+  #note { margin: 0; font-size: 12px; color: var(--gold); }
   #boardTitle { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
   #rows {
     list-style: none; margin: 0; padding: 0; overflow: hidden; font-variant-numeric: tabular-nums;
@@ -98,6 +99,7 @@
   <div id="board" hidden>
     <div id="boardTitle"></div>
     <ol id="rows"></ol>
+    <p id="note" hidden></p>
     <label id="nameRow">Your name <input id="name" maxlength="10" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="YOU"></label>
   </div>
   <p id="cta"></p>
@@ -143,6 +145,7 @@
   const elBoardTitle = document.getElementById('boardTitle');
   const elRows = document.getElementById('rows');
   const elName = document.getElementById('name');
+  const elNote = document.getElementById('note');
   const modeButtons = [...document.querySelectorAll('#modes button')];
 
   const isTouch = matchMedia('(pointer: coarse)').matches;
@@ -177,7 +180,52 @@
   let level = 1, levelGems = 0, rate = 1, spawnTime = SPAWN_TIME;
   let banner = null, lastRun = null, runDate = '', rng = Math.random, prevU = 0.5, prevV = 0.5;
 
-  // Leaderboards are kept on this device: one per mode, and one per day for the daily.
+  // Global leaderboard. Fill in both values from the Supabase project (Settings → API) to switch
+  // it on; the key is the public "publishable"/"anon" one and is safe to ship. Left empty, the
+  // leaderboard stays on this device only. The table and function it needs are in supabase.sql.
+  const SUPABASE_URL = 'https://pzkuxmotrfpbltnfdgkh.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_wYQryMWxFGqOJwjDUOPibw_L0ezn01I';
+  const REMOTE = !!(SUPABASE_URL && SUPABASE_KEY);
+  const REMOTE_HEADERS = { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + SUPABASE_KEY };
+  const MIN_NAME = 2;           // letters needed before a score is posted globally
+  const remoteCache = {};       // board key -> { rows, at, loading, failed }
+
+  // Rows for a board from the server, or null while they load or when the server can't be reached.
+  function remoteBoard(m, date) {
+    const key = boardKey(m, date), c = remoteCache[key];
+    if (!c || (!c.loading && performance.now() - c.at > 30000)) fetchRemote(m, date);
+    return remoteCache[key].rows;
+  }
+  async function fetchRemote(m, date) {
+    const key = boardKey(m, date), prev = remoteCache[key];
+    remoteCache[key] = { rows: prev ? prev.rows : null, at: performance.now(), loading: true, failed: false };
+    let rows = null;
+    try {
+      const q = `select=name,score,level,echoes&mode=eq.${m}&day=eq.${m === 'daily' ? date : ''}` +
+        `&order=score.desc,updated_at.asc&limit=${BOARD_KEEP}`;
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/scores?${q}`, { headers: REMOTE_HEADERS });
+      if (res.ok) rows = await res.json();
+    } catch (e) { /* offline */ }
+    remoteCache[key] = { rows: Array.isArray(rows) ? rows : null, at: performance.now(), loading: false, failed: !Array.isArray(rows) };
+    if (!overlay.classList.contains('hidden')) renderBoard();
+  }
+  // Posts the run just played. The server keeps one row per name and only ever raises its score.
+  async function postScore() {
+    const r = lastRun;
+    if (!REMOTE || !r || r.score <= 0 || playerName.length < MIN_NAME || r.posted === nameKey(playerName)) return;
+    r.posted = nameKey(playerName);
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/submit_score`, {
+        method: 'POST',
+        headers: { ...REMOTE_HEADERS, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ p_mode: r.mode, p_day: r.date, p_name: playerName, p_score: r.score, p_level: r.level, p_echoes: r.echoes }),
+      });
+      if (!res.ok) throw new Error('rejected');
+      fetchRemote(r.mode, r.date);
+    } catch (e) { r.posted = null; }
+  }
+
+  // Scores are also kept on this device: one board per mode, and one per day for the daily.
   const BOARD_KEEP = 10, BOARD_SHOW = 5;
   let playerName = load('echo.name', '');
   let lastEntry = null, lastEntryKey = '';
@@ -679,6 +727,7 @@
       // Highlights this player's row, which is their best run rather than necessarily this one.
       lastEntry = board.find(e => nameKey(e.name) === nameKey(entry.name)) || null;
     }
+    postScore();
   }
 
   // ---------- overlay ----------
@@ -704,12 +753,22 @@
   function renderBoard() {
     // After a daily run keep showing that run's day, even if midnight has passed since.
     const date = state === 'dead' && lastRun && lastRun.mode === mode ? lastRun.date : today();
-    const board = loadBoard(boardKey(mode, date));
-    elBoard.hidden = board.length === 0;
+    const remote = REMOTE ? remoteBoard(mode, date) : null;
+    const board = remote || loadBoard(boardKey(mode, date));
+    const label = mode === 'daily' ? `Daily ${date}` : MODE_NAMES[mode];
+    elBoard.hidden = board.length === 0 && !REMOTE;   // the global board always shows, so a name can be entered
+    elRows.hidden = board.length === 0;
     elTagline.hidden = board.length > 0;
+    elBoardTitle.textContent = label + (
+      remote ? (board.length ? ' · global top scores' : ' · no scores yet, be the first')
+      : !REMOTE ? ' · top scores on this device'
+      : remoteCache[boardKey(mode, date)].failed ? ' · this device (global board unreachable)'
+      : ' · loading global scores…');
+    elNote.hidden = !REMOTE || playerName.length >= MIN_NAME;
+    elNote.textContent = `Add a name of ${MIN_NAME}+ letters to post your scores to the global board.`;
     if (!board.length) return;
-    elBoardTitle.textContent = (mode === 'daily' ? `Daily ${date}` : MODE_NAMES[mode]) + ' · top scores on this device';
-    const mine = state === 'dead' && lastEntry ? board.findIndex(e => e.id === lastEntry.id) : -1;
+    const mine = remote ? (playerName ? board.findIndex(e => nameKey(e.name) === nameKey(playerName)) : -1)
+      : state === 'dead' && lastEntry ? board.findIndex(e => e.id === lastEntry.id) : -1;
     const shown = board.slice(0, BOARD_SHOW).map((e, i) => [e, i]);
     if (mine >= BOARD_SHOW) shown[BOARD_SHOW - 1] = [board[mine], mine];   // always keep this run in view
     elRows.textContent = '';
@@ -727,6 +786,8 @@
   }
 
   elName.value = playerName;
+  // Posting waits for the name to be finished (Enter or leaving the box), so half-typed names never reach the board.
+  elName.addEventListener('change', () => { postScore(); renderBoard(); });
   elName.addEventListener('input', () => {
     playerName = elName.value.trim().slice(0, 10);
     save('echo.name', playerName);
