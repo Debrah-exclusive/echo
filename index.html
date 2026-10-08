@@ -1042,7 +1042,7 @@
   // ---------- intro ----------
   // The white ball runs in from the left and loops the screen with ghosts replaying its path
   // behind it, then spirals into the title's spot, where the ghosts pile in and become its echoes.
-  const INTRO_GHOSTS = 5, INTRO_DELAY = 0.13, INTRO_LOOP = 1.0, INTRO_SPIRAL = 0.5;
+  const INTRO_GHOSTS = 5, INTRO_DELAY = 0.17, INTRO_LOOP = 1.3, INTRO_SPIRAL = 0.65;
   const INTRO_JOIN = 0.9;       // how far round the loop (radians below its left-most point) the entry curve joins
   const elTitle = overlay.querySelector('h1');
   let intro = null;
@@ -1104,7 +1104,7 @@
       }
       ctx.fillStyle = color;
       for (let j = 12; j >= 1; j--) {
-        const [x, y] = introPos(tk - j * 0.012, g);
+        const [x, y] = introPos(tk - j * 0.016, g);
         ctx.globalAlpha = 0.22 * (1 - j / 13);
         circle(x, y, 12 * (1 - j / 20)); ctx.fill();
       }
