@@ -974,15 +974,6 @@
       ctx.font = '600 15px ui-rounded, "SF Pro Rounded", "Segoe UI", system-ui, sans-serif';
       ctx.fillText(isTouch ? 'Tap to resume' : 'Press P or Space to resume', vw / 2, vh / 2 + 26);
     }
-
-    // Touch joystick (screen space)
-    if (stick.on && state === 'play' && isTouch) {
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.strokeStyle = 'rgba(255,255,255,.18)'; ctx.lineWidth = 2;
-      circle(stick.sx, stick.sy, STICK); ctx.stroke();
-      ctx.fillStyle = 'rgba(255,255,255,.22)';
-      circle(stick.x, stick.y, 18); ctx.fill();
-    }
   }
 
   // ---------- main loop ----------
