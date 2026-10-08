@@ -30,8 +30,17 @@
   #overlay.hidden { opacity: 0; }
   h1 {
     margin: 0; font-size: clamp(56px, 16vw, 132px); letter-spacing: .18em; padding-left: .18em; font-weight: 800; line-height: 1;
-    text-shadow: -6px 0 0 rgba(90,200,255,.45), -12px 0 0 rgba(255,90,200,.28), -18px 0 0 rgba(255,209,102,.16);
+    /* --e runs 0 to 1 during the intro: each ghost that lands pushes the coloured echoes further out */
+    --e: 1;
+    text-shadow: calc(-6px * var(--e)) 0 0 rgba(90,200,255,.45), calc(-12px * var(--e)) 0 0 rgba(255,90,200,.28), calc(-18px * var(--e)) 0 0 rgba(255,209,102,.16);
   }
+  #overlay > * { transition: opacity .45s ease; }
+  #overlay > h1 { transition: opacity .12s ease, text-shadow .14s ease; }
+  #overlay.intro { background: none; }
+  #overlay.intro > * { opacity: 0; }
+  #overlay.intro > h1.show { opacity: 1; animation: pop .28s cubic-bezier(.2, 1.5, .4, 1); }
+  #overlay.intro button, #overlay.intro input { pointer-events: none; }
+  @keyframes pop { from { transform: scale(.55); } to { transform: scale(1); } }
   #tagline { margin: 0; max-width: 30ch; font-size: clamp(15px, 2.6vw, 19px); line-height: 1.45; color: var(--dim); }
   #result { margin: 0; font-size: clamp(18px, 3.4vw, 26px); font-weight: 700; min-height: 1.2em; }
   #result b { color: var(--gold); }
@@ -485,6 +494,11 @@
 
   function tryStart() {
     initAudio();
+    if (intro) {                             // a press during the intro skips to the menu
+      const wasPlaying = state === 'intro';
+      endIntro();
+      if (wasPlaying) return true;
+    }
     if (state === 'dead' && !overShown) {   // a press during the replay skips it rather than restarting
       if (deadFor > 0.5) showGameOver();
       return true;
@@ -1004,10 +1018,88 @@
     overlay.classList.remove('hidden');
   }
 
+  // ---------- intro ----------
+  // The white ball runs in from the left and loops the screen with ghosts replaying its path
+  // behind it, then spirals into the title's spot, where the ghosts pile in and become its echoes.
+  const INTRO_GHOSTS = 5, INTRO_DELAY = 0.13, INTRO_LOOP = 1.0, INTRO_SPIRAL = 0.5;
+  const elTitle = overlay.querySelector('h1');
+  let intro = null;
+
+  function startIntro() {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    state = 'intro';
+    overlay.classList.add('intro');
+    elTitle.style.setProperty('--e', '0');
+    intro = { t0: performance.now(), hits: -1, geo: null, revealAt: Infinity };
+  }
+  function introGeo() {
+    const box = elTitle.getBoundingClientRect();
+    const R = Math.min(vw, vh) * 0.36, v = TAU * R / INTRO_LOOP, tEnter = (vw / 2 + 40) / v;
+    return { cx: vw / 2, cy: vh / 2, hx: box.left + box.width / 2, hy: box.top + box.height / 2, R, v, tEnter, tEnd: tEnter + INTRO_LOOP + INTRO_SPIRAL };
+  }
+  // Where the ball is t seconds in. Ghosts use the same path, a little later.
+  function introPos(t, g) {
+    if (t < g.tEnter) return [-40 + g.v * t, g.cy + g.R];
+    const s = t - g.tEnter, th = Math.PI / 2 - TAU * s / INTRO_LOOP;
+    const p = Math.max(0, Math.min(1, (s - INTRO_LOOP) / INTRO_SPIRAL)), e = p * p * (3 - 2 * p), r = g.R * (1 - p);
+    return [g.cx + (g.hx - g.cx) * e + r * Math.cos(th), g.cy + (g.hy - g.cy) * e + r * Math.sin(th)];
+  }
+  function revealMenu() {
+    overlay.classList.remove('intro');
+    elTitle.classList.remove('show');
+    elTitle.style.setProperty('--e', '1');
+    if (state === 'intro') state = 'title';
+  }
+  function endIntro() { revealMenu(); intro = null; particles.length = 0; }
+
+  function drawIntro() {
+    const g = intro.geo || (intro.geo = introGeo()), t = (performance.now() - intro.t0) / 1000;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#07080d';
+    ctx.fillRect(0, 0, vw, vh);
+
+    // Ghosts first, so the ball stays on top. Each one that reaches the centre lands as an echo.
+    for (let k = INTRO_GHOSTS; k >= 0; k--) {
+      const tk = t - k * INTRO_DELAY, color = k ? `hsl(${ghostHue(k - 1)},90%,62%)` : '#ffffff';
+      if (tk >= g.tEnd) {
+        if (k > intro.hits) {
+          intro.hits = k;
+          burst(g.hx, g.hy, color, k ? 16 : 30, k ? 300 : 380);
+          if (k === 0) elTitle.classList.add('show');
+          elTitle.style.setProperty('--e', String(k / INTRO_GHOSTS));
+          if (k === INTRO_GHOSTS) intro.revealAt = t + 0.3;
+        }
+        continue;
+      }
+      ctx.fillStyle = color;
+      for (let j = 12; j >= 1; j--) {
+        const [x, y] = introPos(tk - j * 0.012, g);
+        ctx.globalAlpha = 0.22 * (1 - j / 13);
+        circle(x, y, 12 * (1 - j / 20)); ctx.fill();
+      }
+      const [x, y] = introPos(tk, g);
+      ctx.globalAlpha = 0.2;
+      circle(x, y, 23); ctx.fill();
+      ctx.globalAlpha = 1;
+      circle(x, y, 12); ctx.fill();
+    }
+
+    for (const p of particles) {
+      ctx.globalAlpha = 1 - p.age / p.life;
+      ctx.fillStyle = p.color;
+      circle(p.x, p.y, 3.4 * (1 - p.age / p.life) + 0.6); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    if (t >= intro.revealAt && state === 'intro') revealMenu();
+    if (t >= intro.revealAt + 1 || t > 8) endIntro();   // let the last sparks fade, then hand over to the normal scene
+  }
+
   // ---------- rendering ----------
   function circle(x, y, r) { ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); }
 
   function draw() {
+    if (intro) { drawIntro(); return; }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#07080d';
     ctx.fillRect(0, 0, vw, vh);
@@ -1278,6 +1370,7 @@
   addEventListener('resize', layout);
   reset();
   showTitle();
+  startIntro();
   requestAnimationFrame(frame);
 })();
 </script>
