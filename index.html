@@ -37,7 +37,8 @@
   #overlay > * { transition: opacity .45s ease; }
   #overlay > h1 { transition: opacity .12s ease, text-shadow .14s ease; }
   #overlay.intro { background: none; }
-  #overlay.intro > * { opacity: 0; }
+  #overlay.intro > * { opacity: 0; transition: none; }   /* hidden at once; only the reveal fades */
+  #overlay.intro > h1 { transition: text-shadow .14s ease; }
   #overlay.intro > h1.show { opacity: 1; animation: pop .28s cubic-bezier(.2, 1.5, .4, 1); }
   #overlay.intro button, #overlay.intro input { pointer-events: none; }
   @keyframes pop { from { transform: scale(.55); } to { transform: scale(1); } }
