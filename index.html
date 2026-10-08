@@ -179,6 +179,8 @@
   const DASH_CD = 2;
   const DASH_GRACE = 0.06;      // extra invulnerability after a dash ends
   const CYAN = '#7fe7ff';
+  const MAX_LIVES = 3;          // Levels mode only
+  const HURT_TIME = 2;          // seconds of safety after losing a life
   const HISTORY = 48;           // steps of play kept for the death replay (0.8 s)
   const REPLAY_HOLD = 0.45;     // seconds the impact is held before the replay rewinds
 
@@ -221,6 +223,7 @@
   let vw = 0, vh = 0, dpr = 1, scale = 1, ox = 0, oy = 0;
   let state = 'title';          // 'title' | 'play' | 'dead'
   let paused = false;
+  let lives = 0, hurtT = 0;
   let score = 0;
   let best = 0;
   let muted = load('echo.muted', '0') === '1';
@@ -392,6 +395,7 @@
     ghosts = []; path = []; particles = []; trail = []; floats = [];
     mult = 1; dashT = 0; safeT = 0; dashCd = 0; lastDir = [1, 0];
     paused = false;
+    lives = mode === 'levels' ? MAX_LIVES : 0; hurtT = 0;
     runDate = today();
     best = +load(bestKey(mode, runDate), 0) || 0;
     rng = seeded('echo-' + runDate); prevU = prevV = 0.5;
@@ -697,6 +701,7 @@
     if (dx || dy) { const l = Math.hypot(dx, dy); lastDir = [dx / l, dy / l]; }
     dashCd = Math.max(0, dashCd - STEP);
     safeT = Math.max(0, safeT - STEP);
+    hurtT = Math.max(0, hurtT - STEP);
     if (dashT > 0) {
       dashT -= STEP;
       player.vx = dashDir[0] * DASH_SPEED; player.vy = dashDir[1] * DASH_SPEED;
@@ -727,8 +732,11 @@
       g.x = p[a] + (p[a + 2] - p[a]) * f;
       g.y = p[a + 1] + (p[a + 3] - p[a + 1]) * f;
       const d = Math.hypot(g.x - player.x, g.y - player.y);
-      if (safeT > 0) { g.close = false; continue; }   // dashing passes straight through
-      if (d < HIT) { die(i); return; }
+      if (safeT > 0 || hurtT > 0) { g.close = false; continue; }   // dashing, or just hit: passes straight through
+      if (d < HIT) {
+        if (lives > 1) { loseLife(i); continue; }
+        die(i); return;
+      }
       if (d < NEAR) g.close = true;
       else if (g.close && d > NEAR + 6) {
         // Paid on the way out, so only a survived graze counts.
@@ -816,20 +824,33 @@
     return { a: history[i], b: history[Math.min(i + 1, last)], f: r.pos - i, prog: last > 0 ? r.pos / last : 1 };
   }
 
+  // Levels mode: a hit costs a life instead of the run. Play carries on where you are, with a
+  // couple of seconds of safety to get clear.
+  function loseLife(i) {
+    lives--; hurtT = HURT_TIME; mult = 1; shake = 12;
+    burst(player.x, player.y, `hsl(${ghostHue(i)},90%,65%)`, 22, 300);
+    float(player.x, player.y - 24, lives === 1 ? 'last life!' : `${lives} lives left`, '#ff7b7b');
+    blip(260, 0.3, 'sawtooth', 0.14, 70);
+    if (navigator.vibrate) { try { navigator.vibrate(80); } catch (e) { /* unsupported */ } }
+  }
+
   function clearLevel() {
     const bonus = 10 * level;
     score += bonus;
+    const gainedLife = lives < MAX_LIVES;
+    if (gainedLife) lives++;
     ghosts.forEach((g, i) => burst(g.x, g.y, `hsl(${ghostHue(i)},90%,65%)`, 14, 240));
     ghosts = []; path = []; shake = 7;
     history = [];   // old snapshots refer to ghosts that no longer exist
     const oldRate = rate;
     setLevel(level + 1);
-    banner = { text: `LEVEL ${level}`, sub: `Board cleared +${bonus}` + (rate > oldRate ? ' · ghosts speed up' : ''), age: 0 };
+    banner = { text: `LEVEL ${level}`, sub: `Board cleared +${bonus}` + (gainedLife ? ' · +1 life' : '') + (rate > oldRate ? ' · ghosts speed up' : ''), age: 0 };
     [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => blip(f, 0.18, 'triangle', 0.13), 60 + i * 70));
   }
 
   function die(i) {
     state = 'dead'; deadFor = 0; killer = i; shake = 16;
+    lives = 0;
     snapshot();
     replay = { pos: 0, started: false, done: false, doneFor: 0 };
     syncUI();
@@ -866,7 +887,7 @@
       b.classList.toggle('sel', m === mode);
       b.querySelector('b').textContent = (isTouch ? '' : `${i + 1} · `) + MODE_NAMES[m];
       b.querySelector('span').textContent =
-        m === 'levels' ? (bestLevel ? `Best: level ${bestLevel} · ${top} pts` : 'Clear the board to reach the next level')
+        m === 'levels' ? (bestLevel ? `Best: level ${bestLevel} · ${top} pts` : 'Three lives. Clear the board to level up')
         : m === 'endless' ? (top ? `Best: ${top} pts` : 'One board, no breaks')
         : (top ? `Today: ${top} pts` : 'Same gems for everyone today') + (streakNow() ? ` · ${streakNow()}-day streak` : '');
     });
@@ -1142,7 +1163,7 @@
       ctx.font = '600 15px ui-rounded, "SF Pro Rounded", "Segoe UI", system-ui, sans-serif';
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
       ctx.fillStyle = 'rgba(255,255,255,.35)';
-      ctx.fillText(mode === 'levels' ? `LEVEL ${level} · ${levelGems}/${gemsNeeded()}`
+      ctx.fillText(mode === 'levels' ? `LEVEL ${level} · ${levelGems}/${gemsNeeded()} · ${'♥'.repeat(lives)}${'♡'.repeat(MAX_LIVES - lives)}`
         : mode === 'daily' ? `DAILY ${runDate}` : 'ENDLESS', 14, 12);
       ctx.textBaseline = 'bottom';
       const target = activeChallenge();
@@ -1240,16 +1261,18 @@
       const dashing = rv ? rv.a.dash : safeT > 0;
       const px = rv ? rv.a.px + (rv.b.px - rv.a.px) * rv.f : player.x;
       const py = rv ? rv.a.py + (rv.b.py - rv.a.py) * rv.f : player.y;
-      ctx.globalAlpha = dashing ? 0.3 : look.id === 'classic' ? 0.16 : 0.3;
+      const blink = !rv && hurtT > 0 && Math.floor(hurtT * 10) % 2 === 0 ? 0.35 : 1;   // flickers while safe after a hit
+      ctx.globalAlpha = (dashing ? 0.3 : look.id === 'classic' ? 0.16 : 0.3) * blink;
       ctx.fillStyle = dashing ? CYAN : look.color;
       circle(px, py, R * (dashing ? 2.8 : 2)); ctx.fill();
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = blink;
       ctx.fillStyle = '#fff';
       circle(px, py, R); ctx.fill();
       if (look.id !== 'classic') {
         ctx.strokeStyle = look.color; ctx.lineWidth = 3.5;
         circle(px, py, R - 1.75); ctx.stroke();
       }
+      ctx.globalAlpha = 1;
       if (state === 'play') {
         // Dash cooldown ring: faint and full when ready, refilling otherwise
         const ready = dashCd <= 0;
