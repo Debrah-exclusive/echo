@@ -179,7 +179,7 @@
   const DASH_CD = 2;
   const DASH_GRACE = 0.06;      // extra invulnerability after a dash ends
   const CYAN = '#7fe7ff';
-  const MAX_LIVES = 3;          // Levels mode only
+  const MAX_LIVES = 3;          // Levels mode only: three for the whole run, never refilled
   const HURT_TIME = 2;          // seconds of safety after losing a life
   const HISTORY = 48;           // steps of play kept for the death replay (0.8 s)
   const REPLAY_HOLD = 0.45;     // seconds the impact is held before the replay rewinds
@@ -837,14 +837,12 @@
   function clearLevel() {
     const bonus = 10 * level;
     score += bonus;
-    const gainedLife = lives < MAX_LIVES;
-    if (gainedLife) lives++;
     ghosts.forEach((g, i) => burst(g.x, g.y, `hsl(${ghostHue(i)},90%,65%)`, 14, 240));
     ghosts = []; path = []; shake = 7;
     history = [];   // old snapshots refer to ghosts that no longer exist
     const oldRate = rate;
     setLevel(level + 1);
-    banner = { text: `LEVEL ${level}`, sub: `Board cleared +${bonus}` + (gainedLife ? ' · +1 life' : '') + (rate > oldRate ? ' · ghosts speed up' : ''), age: 0 };
+    banner = { text: `LEVEL ${level}`, sub: `Board cleared +${bonus}` + (rate > oldRate ? ' · ghosts speed up' : ''), age: 0 };
     [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => blip(f, 0.18, 'triangle', 0.13), 60 + i * 70));
   }
 
